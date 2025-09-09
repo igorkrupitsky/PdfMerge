@@ -342,59 +342,80 @@ Public Class Form1
 		oPdfDoc.Add(oChapter)
 	End Sub
 
-	Sub AddPdf(ByVal sInFilePath As String, ByRef oPdfDoc As iTextSharp.text.Document, ByRef oPdfWriter As PdfWriter, ByVal sBookmarkTitle As String)
+	Sub AddPdf(ByVal sInFilePath As String,
+		   ByRef oPdfDoc As iTextSharp.text.Document,
+		   ByRef oPdfWriter As PdfWriter,
+		   ByVal sBookmarkTitle As String,
+		   Optional ByVal resizeToLetter As Boolean = False)
 
 		AddBookmark(oPdfDoc, sBookmarkTitle)
 
-		Dim oDirectContent As iTextSharp.text.pdf.PdfContentByte = oPdfWriter.DirectContent
-		Dim oPdfReader As iTextSharp.text.pdf.PdfReader = New iTextSharp.text.pdf.PdfReader(sInFilePath)
-		Dim iNumberOfPages As Integer = oPdfReader.NumberOfPages
-		Dim iPage As Integer = 0
+		Dim cb As iTextSharp.text.pdf.PdfContentByte = oPdfWriter.DirectContent
 
-		Do While (iPage < iNumberOfPages)
-			iPage += 1
+		Dim reader As New iTextSharp.text.pdf.PdfReader(sInFilePath)
+		Dim total As Integer = reader.NumberOfPages
 
-			Dim iRotation As Integer = oPdfReader.GetPageRotation(iPage)
-			Dim oPdfImportedPage As iTextSharp.text.pdf.PdfImportedPage = oPdfWriter.GetImportedPage(oPdfReader, iPage)
+		For page As Integer = 1 To total
+			Dim pageRect As iTextSharp.text.Rectangle = reader.GetPageSizeWithRotation(page)
+			Dim rotation As Integer = reader.GetPageRotation(page)
+			Dim imp As iTextSharp.text.pdf.PdfImportedPage = oPdfWriter.GetImportedPage(reader, page)
 
-			If chkResize.Checked Then
-				If (oPdfImportedPage.Width <= oPdfImportedPage.Height) Then
-					oPdfDoc.SetPageSize(iTextSharp.text.PageSize.LETTER)
-				Else
-					oPdfDoc.SetPageSize(iTextSharp.text.PageSize.LETTER.Rotate())
-				End If
-
+			If resizeToLetter Then
+				' Pick portrait/landscape letter to better fit the source page
+				Dim target As iTextSharp.text.Rectangle = If(pageRect.Width <= pageRect.Height,
+															iTextSharp.text.PageSize.LETTER,
+															iTextSharp.text.PageSize.LETTER.Rotate())
+				oPdfDoc.SetPageSize(target)
 				oPdfDoc.NewPage()
 
-				Dim iWidthFactor As Single = oPdfDoc.PageSize.Width / oPdfReader.GetPageSize(iPage).Width
-				Dim iHeightFactor As Single = oPdfDoc.PageSize.Height / oPdfReader.GetPageSize(iPage).Height
-				Dim iFactor As Single = Math.Min(iWidthFactor, iHeightFactor)
+				' Source dims already include rotation
+				Dim srcW As Single = pageRect.Width
+				Dim srcH As Single = pageRect.Height
 
-				Dim iOffsetX As Single = (oPdfDoc.PageSize.Width - (oPdfImportedPage.Width * iFactor)) / 2
-				Dim iOffsetY As Single = (oPdfDoc.PageSize.Height - (oPdfImportedPage.Height * iFactor)) / 2
+				Dim sx As Single = target.Width / srcW
+				Dim sy As Single = target.Height / srcH
+				Dim s As Single = Math.Min(sx, sy)
 
-				oDirectContent.AddTemplate(oPdfImportedPage, iFactor, 0, 0, iFactor, iOffsetX, iOffsetY)
+				' Drawn width/height after applying rotation 90/270 swap
+				Dim drawnW As Single = If(rotation = 90 Or rotation = 270, srcH * s, srcW * s)
+				Dim drawnH As Single = If(rotation = 90 Or rotation = 270, srcW * s, srcH * s)
+
+				Dim offsetX As Single = (target.Width - drawnW) / 2
+				Dim offsetY As Single = (target.Height - drawnH) / 2
+
+				Select Case rotation
+					Case 90
+						cb.AddTemplate(imp, 0, -s, s, 0, offsetX, offsetY + drawnH)
+					Case 270
+						cb.AddTemplate(imp, 0, s, -s, 0, offsetX + drawnW, offsetY)
+					Case 180
+						cb.AddTemplate(imp, -s, 0, 0, -s, offsetX + drawnW, offsetY + drawnH)
+					Case Else
+						cb.AddTemplate(imp, s, 0, 0, s, offsetX, offsetY)
+				End Select
 
 			Else
-				oPdfDoc.SetPageSize(oPdfReader.GetPageSizeWithRotation(iPage))
+				' Keep original page size/orientation
+				oPdfDoc.SetPageSize(pageRect)
 				oPdfDoc.NewPage()
 
-				If iRotation = 90 Then
-					oDirectContent.AddTemplate(oPdfImportedPage, 0, -1.0F, 1.0F, 0, 0, oPdfReader.GetPageSizeWithRotation(iPage).Height)
-
-				ElseIf iRotation = 270 Then
-					oDirectContent.AddTemplate(oPdfImportedPage, 0, 1.0F, -1.0F, 0, oPdfReader.GetPageSizeWithRotation(iPage).Width, 0)
-
-				ElseIf iRotation = 180 Then
-					oDirectContent.AddTemplate(oPdfImportedPage, -1.0F, 0, 0, -1.0F, oPdfReader.GetPageSizeWithRotation(iPage).Width, oPdfReader.GetPageSizeWithRotation(iPage).Height)
-
-				Else
-					oDirectContent.AddTemplate(oPdfImportedPage, 1.0F, 0, 0, 1.0F, 0, 0)
-				End If
+				Select Case rotation
+					Case 90
+						cb.AddTemplate(imp, 0, -1.0F, 1.0F, 0, 0, pageRect.Height)
+					Case 270
+						cb.AddTemplate(imp, 0, 1.0F, -1.0F, 0, pageRect.Width, 0)
+					Case 180
+						cb.AddTemplate(imp, -1.0F, 0, 0, -1.0F, pageRect.Width, pageRect.Height)
+					Case Else
+						cb.AddTemplate(imp, 1.0F, 0, 0, 1.0F, 0, 0)
+				End Select
 			End If
-		Loop
+		Next
+
+		reader.Close()
 
 	End Sub
+
 
 	Sub AddImage(ByVal sInFilePath As String, ByRef oPdfDoc As iTextSharp.text.Document, ByRef oPdfWriter As PdfWriter, ByVal sExt As String, sBookmarkTitle As String)
 
